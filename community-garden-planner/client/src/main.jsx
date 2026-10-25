@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   ArrowDownUp, ArrowUpRight, CalendarDays, Check, CheckCircle2, Circle, Clock3,
-  Flower2, Leaf, MapPin, Plus, RefreshCw, Search, Shovel, Sprout, Sun,
-  Trash2, Wheat, X
+  Flower2, Leaf, LoaderCircle, LockKeyhole, LogOut, Mail, MapPin, Plus,
+  RefreshCw, Search, Shovel, Sprout, Sun, Trash2, UserRound, Wheat, X
 } from 'lucide-react';
 import './style.css';
 
-const API = import.meta.env.VITE_API_URL || '/api';
+const API = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 const stages = ['Planned', 'Growing', 'Ready to Harvest', 'Harvested'];
 const availabilityOptions = ['In use', 'Reserved', 'Available'];
 const today = () => {
@@ -19,17 +19,103 @@ const dateInput = value => value ? new Date(value).toISOString().slice(0, 10) : 
 const plotBlank = () => ({ plotName: '', areaSqM: '6', availability: 'In use', gardener: '', crop: '', plantedOn: today(), expectedHarvestOn: '', wateringSchedule: 'Every 2–3 days', status: 'Planned', expectedHarvestKg: '0' });
 const taskBlank = () => ({ title: '', assignedTo: '', dueOn: today(), plotId: '' });
 
-async function request(path, options = {}) {
-  const response = await fetch(`${API}${path}`, {
+async function request(path, options = {}, accessToken = '', onAccessTokenChange = () => {}) {
+  const send = bearer => fetch(`${API}${path}`, {
     ...options,
-    headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers }
+    credentials: 'include',
+    headers: {
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+      ...options.headers
+    }
   });
+  let response = await send(accessToken);
+  if (response.status === 401 && accessToken && !path.startsWith('/auth/')) {
+    try {
+      const refreshed = await request('/auth/refresh', { method: 'POST', headers: { 'X-Requested-With': 'PlotPetal' } });
+      onAccessTokenChange(refreshed.accessToken);
+      response = await send(refreshed.accessToken);
+    } catch {
+      onAccessTokenChange('');
+      throw new Error('Your sign-in has expired. Please sign in again.');
+    }
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.message || 'That garden update could not be saved. Please try again.');
   return payload;
 }
 
 function App() {
+  const [user, setUser] = useState(null);
+  const [accessToken, setAccessToken] = useState('');
+  const [checkingSession, setCheckingSession] = useState(true);
+  const updateAccessToken = value => {
+    setAccessToken(value || '');
+    if (!value) setUser(null);
+  };
+
+  useEffect(() => {
+    request('/auth/refresh', { method: 'POST', headers: { 'X-Requested-With': 'PlotPetal' } })
+      .then(session => { setAccessToken(session.accessToken); setUser(session.user); })
+      .catch(() => { setAccessToken(''); setUser(null); })
+      .finally(() => setCheckingSession(false));
+  }, []);
+
+  if (checkingSession) return <div className="auth-loading"><span className="brand-mark"><Sprout size={22}/></span><LoaderCircle className="spinner" size={19}/><span>Opening your garden…</span></div>;
+  if (!user) return <AuthScreen onAuthenticated={session => { setAccessToken(session.accessToken); setUser(session.user); }} />;
+  return <GardenDashboard user={user} accessToken={accessToken} onAccessTokenChange={updateAccessToken} onSignedOut={() => { setAccessToken(''); setUser(null); }}/>
+}
+
+function AuthScreen({ onAuthenticated }) {
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', passwordConfirmation: '' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isRegistration = mode === 'register';
+
+  async function submit(event) {
+    event.preventDefault(); setError('');
+    if (isRegistration && form.password !== form.passwordConfirmation) {
+      setError('The passwords do not match.'); return;
+    }
+    setBusy(true);
+    try {
+      const session = await request(`/auth/${mode}`, { method: 'POST', body: JSON.stringify(form) });
+      onAuthenticated(session);
+    } catch (cause) { setError(cause.message || 'We could not sign you in. Please try again.'); }
+    finally { setBusy(false); }
+  }
+
+  function changeMode(nextMode) {
+    setMode(nextMode); setError(''); setForm({ fullName: '', email: '', password: '', passwordConfirmation: '' });
+  }
+
+  return <main className="auth-page">
+    <section className="auth-card" aria-labelledby="auth-title">
+      <a className="auth-brand" href="#" aria-label="Plot and Petal"><span className="brand-mark"><Sprout size={23}/></span><span>Plot <em>&amp;</em> Petal</span></a>
+      <div className="auth-kicker"><span className="tiny-dot"/> A GARDEN GROWS BETTER TOGETHER</div>
+      <h1 id="auth-title">{isRegistration ? 'Make room to grow.' : 'Welcome back.'}</h1>
+      <p className="auth-subtitle">{isRegistration ? 'Create your private garden account and keep your plans close.' : 'Sign in to tend your plots and pick up where you left off.'}</p>
+      <div className="auth-tabs" role="tablist" aria-label="Account access">
+        <button type="button" role="tab" aria-selected={!isRegistration} className={!isRegistration ? 'selected' : ''} onClick={() => changeMode('login')}>Sign in</button>
+        <button type="button" role="tab" aria-selected={isRegistration} className={isRegistration ? 'selected' : ''} onClick={() => changeMode('register')}>Create account</button>
+      </div>
+      {error && <div className="feedback feedback-error auth-feedback" role="alert">{error}</div>}
+      <form className="auth-form" onSubmit={submit}>
+        {isRegistration && <label>Full name<span className="auth-input"><UserRound size={16}/><input autoComplete="name" required minLength="2" maxLength="80" value={form.fullName} onChange={event => setForm({ ...form, fullName: event.target.value })} placeholder="Your name"/></span></label>}
+        <label>Email address<span className="auth-input"><Mail size={16}/><input autoComplete="email" type="email" required maxLength="254" value={form.email} onChange={event => setForm({ ...form, email: event.target.value })} placeholder="you@example.com"/></span></label>
+        <label>Password<span className="auth-input"><LockKeyhole size={16}/><input autoComplete={isRegistration ? 'new-password' : 'current-password'} type="password" required minLength={isRegistration ? 12 : 1} maxLength="72" value={form.password} onChange={event => setForm({ ...form, password: event.target.value })} placeholder={isRegistration ? 'At least 12 characters' : 'Your password'}/></span></label>
+        {isRegistration && <label>Confirm password<span className="auth-input"><LockKeyhole size={16}/><input autoComplete="new-password" type="password" required minLength="12" maxLength="72" value={form.passwordConfirmation} onChange={event => setForm({ ...form, passwordConfirmation: event.target.value })} placeholder="Enter your password again"/></span></label>}
+        <button className="button button-dark auth-submit" disabled={busy}>{busy ? <><LoaderCircle className="spinner" size={16}/> {isRegistration ? 'Creating account…' : 'Signing in…'}</> : isRegistration ? 'Create your account' : 'Sign in to your garden'}</button>
+      </form>
+      <p className="auth-private"><LockKeyhole size={13}/> Your garden is private to your account.</p>
+    </section>
+    <aside className="auth-aside" aria-hidden="true"><div className="auth-aside-art"><span className="auth-sun"/><span className="auth-stem"/><span className="auth-leaf auth-leaf-one"/><span className="auth-leaf auth-leaf-two"/><span className="auth-leaf auth-leaf-three"/></div><p>Good things take<br/><em>time to grow.</em></p><span>CARE FOR THE PATCH. GROW TOGETHER.</span></aside>
+  </main>;
+}
+
+function GardenDashboard({ user, accessToken, onAccessTokenChange, onSignedOut }) {
+  const apiRequest = (path, options = {}) => request(path, options, accessToken, onAccessTokenChange);
   const [plots, setPlots] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [activity, setActivity] = useState([]);
@@ -52,7 +138,7 @@ function App() {
     setError('');
     try {
       const [nextPlots, nextTasks, nextActivity] = await Promise.all([
-        request('/plots'), request('/tasks'), request('/activity')
+        apiRequest('/plots'), apiRequest('/tasks'), apiRequest('/activity')
       ]);
       setPlots(nextPlots);
       setTasks(nextTasks);
@@ -125,7 +211,7 @@ function App() {
       expectedHarvestOn: plotForm.availability === 'Available' ? '' : plotForm.expectedHarvestOn
     };
     try {
-      const saved = await request(editingId ? `/plots/${editingId}` : '/plots', {
+      const saved = await apiRequest(editingId ? `/plots/${editingId}` : '/plots', {
         method: editingId ? 'PATCH' : 'POST', body: JSON.stringify(payload)
       });
       setPlots(current => editingId ? current.map(plot => plot._id === saved._id ? saved : plot) : [saved, ...current]);
@@ -139,7 +225,7 @@ function App() {
   async function changeStage(plot, status) {
     setError(''); setNotice('');
     try {
-      const updated = await request(`/plots/${plot._id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+      const updated = await apiRequest(`/plots/${plot._id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
       setPlots(current => current.map(item => item._id === updated._id ? updated : item));
       setNotice(`${plot.plotName} is now marked ${status.toLowerCase()}.`);
       await load({ quiet: true });
@@ -150,7 +236,7 @@ function App() {
     if (!window.confirm(`Remove “${plot.plotName}” from the garden register?`)) return;
     setError(''); setNotice('');
     try {
-      await request(`/plots/${plot._id}`, { method: 'DELETE' });
+      await apiRequest(`/plots/${plot._id}`, { method: 'DELETE' });
       setPlots(current => current.filter(item => item._id !== plot._id));
       setNotice(`${plot.plotName} was removed from the garden.`);
       await load({ quiet: true });
@@ -160,7 +246,7 @@ function App() {
   async function addTask(event) {
     event.preventDefault(); setSaving(true); setError(''); setNotice('');
     try {
-      const created = await request('/tasks', { method: 'POST', body: JSON.stringify({ ...taskForm, plotId: taskForm.plotId || null }) });
+      const created = await apiRequest('/tasks', { method: 'POST', body: JSON.stringify({ ...taskForm, plotId: taskForm.plotId || null }) });
       setTasks(current => [...current, created].sort((a, b) => Number(a.completed) - Number(b.completed) || new Date(a.dueOn) - new Date(b.dueOn)));
       setNotice(`“${created.title}” was added to the garden list.`);
       setTaskForm(taskBlank()); setShowTaskForm(false);
@@ -172,7 +258,7 @@ function App() {
   async function toggleTask(task) {
     setError(''); setNotice('');
     try {
-      const updated = await request(`/tasks/${task._id}`, { method: 'PATCH', body: JSON.stringify({ completed: !task.completed }) });
+      const updated = await apiRequest(`/tasks/${task._id}`, { method: 'PATCH', body: JSON.stringify({ completed: !task.completed }) });
       setTasks(current => current.map(item => item._id === updated._id ? updated : item));
       setNotice(updated.completed ? 'Task marked complete.' : 'Task moved back to the garden list.');
       await load({ quiet: true });
@@ -183,7 +269,7 @@ function App() {
     if (!window.confirm(`Remove “${task.title}” from the garden list?`)) return;
     setError(''); setNotice('');
     try {
-      await request(`/tasks/${task._id}`, { method: 'DELETE' });
+      await apiRequest(`/tasks/${task._id}`, { method: 'DELETE' });
       setTasks(current => current.filter(item => item._id !== task._id));
       setNotice('Task removed from the garden list.');
       await load({ quiet: true });

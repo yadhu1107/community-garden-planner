@@ -1,41 +1,28 @@
 import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
 import mongoose from 'mongoose';
-import plotsRouter from './routes/plots.js';
-import tasksRouter from './routes/tasks.js';
-import activityRouter from './routes/activity.js';
-
-const app = express();
-const PORT = Number(process.env.PORT || 5000);
-
-app.use(cors());
-app.use(express.json({ limit: '1mb' }));
-app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'community-garden-planner-api' }));
-app.use('/api/plots', plotsRouter);
-app.use('/api/tasks', tasksRouter);
-app.use('/api/activity', activityRouter);
-app.use((err, _req, res, _next) => {
-  console.error(err.message);
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ message: 'Check the form values and try again.' });
-  if (err.name === 'ValidationError') return res.status(400).json({ message: err.message });
-  if (err.name === 'CastError') return res.status(400).json({ message: 'Invalid value supplied.' });
-  res.status(500).json({ message: 'Server error. Check the server terminal for details.' });
-});
+import { createApp } from './app.js';
+import User from './models/User.js';
+import RefreshSession from './models/RefreshSession.js';
 
 async function start() {
   if (!process.env.MONGO_URI || process.env.MONGO_URI.includes('<cluster-host>')) {
-    console.error('MONGO_URI is missing or still contains the example <cluster-host>. Set your real URI in server/.env.');
-    process.exit(1);
+    throw new Error('Set MONGO_URI in the backend environment before starting the service.');
   }
-  try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB connected');
-    app.listen(PORT, () => console.log(`Community Garden API listening on http://localhost:${PORT}`));
-  } catch (err) {
-    console.error(`MongoDB connection failed: ${err.message}`);
-    process.exit(1);
+  if (!process.env.JWT_ACCESS_SECRET || Buffer.byteLength(process.env.JWT_ACCESS_SECRET, 'utf8') < 32) {
+    throw new Error('Set JWT_ACCESS_SECRET to a random value of at least 32 bytes.');
   }
+
+  await mongoose.connect(process.env.MONGO_URI);
+  await Promise.all([User.init(), RefreshSession.init()]);
+  const app = createApp();
+  const port = process.env.PORT || 5000;
+  const server = app.listen(port, () => console.log(`Community Garden API listening on port ${port}.`));
+  const shutdown = () => server.close(async () => { await mongoose.disconnect(); process.exit(0); });
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
 
-start();
+start().catch(err => {
+  console.error(`API startup failed (${err.name || 'Error'}). Check the server environment settings and database access.`);
+  process.exit(1);
+});

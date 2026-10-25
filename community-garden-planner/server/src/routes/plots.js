@@ -27,7 +27,7 @@ function validatePlotInput(input) {
 
 router.get('/', async (_req, res, next) => {
   try {
-    const plots = await Plot.find().sort({ createdAt: -1 }).lean();
+    const plots = await Plot.find({ userId: req.user.id }).sort({ createdAt: -1 }).lean();
     res.json(plots);
   } catch (err) { next(err); }
 });
@@ -44,12 +44,13 @@ router.post('/', async (req, res, next) => {
       expectedHarvestOn: req.body.expectedHarvestOn || null,
       wateringSchedule: req.body.wateringSchedule ?? 'Every 2–3 days',
       status: req.body.status ?? 'Planned',
-      expectedHarvestKg: req.body.expectedHarvestKg ?? 0
+      expectedHarvestKg: req.body.expectedHarvestKg ?? 0,
+      userId: req.user.id
     };
     const message = validatePlotInput(input);
     if (message) return res.status(400).json({ message });
     const plot = await Plot.create(input);
-    await GardenActivity.create({ message: `Added ${plot.plotName} to the garden.`, kind: plot.crop ? 'plant' : 'plot' });
+    await GardenActivity.create({ userId: req.user.id, message: `Added ${plot.plotName} to the garden.`, kind: plot.crop ? 'plant' : 'plot' });
     res.status(201).json(plot);
   } catch (err) { next(err); }
 });
@@ -57,14 +58,14 @@ router.post('/', async (req, res, next) => {
 router.patch('/:id', async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid plot ID.' });
-    const plot = await Plot.findById(req.params.id);
+    const plot = await Plot.findOne({ _id: req.params.id, userId: req.user.id });
     if (!plot) return res.status(404).json({ message: 'Plot not found.' });
     const updates = Object.fromEntries(editableFields.filter(key => req.body[key] !== undefined).map(key => [key, req.body[key]]));
     Object.assign(plot, updates);
     const message = validatePlotInput(plot);
     if (message) return res.status(400).json({ message });
     await plot.save();
-    await GardenActivity.create({ message: `Updated ${plot.plotName}${updates.status ? ` to ${plot.status.toLowerCase()}` : ''}.`, kind: plot.crop ? 'plant' : 'plot' });
+    await GardenActivity.create({ userId: req.user.id, message: `Updated ${plot.plotName}${updates.status ? ` to ${plot.status.toLowerCase()}` : ''}.`, kind: plot.crop ? 'plant' : 'plot' });
     res.json(plot);
   } catch (err) { next(err); }
 });
@@ -72,9 +73,9 @@ router.patch('/:id', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ message: 'Invalid plot ID.' });
-    const plot = await Plot.findByIdAndDelete(req.params.id);
+    const plot = await Plot.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
     if (!plot) return res.status(404).json({ message: 'Plot not found.' });
-    await GardenActivity.create({ message: `Removed ${plot.plotName} from the garden register.`, kind: 'plot' });
+    await GardenActivity.create({ userId: req.user.id, message: `Removed ${plot.plotName} from the garden register.`, kind: 'plot' });
     res.json({ message: 'Plot removed.' });
   } catch (err) { next(err); }
 });

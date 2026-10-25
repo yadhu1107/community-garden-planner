@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const plotSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   plotName: { type: String, required: true, trim: true, maxlength: 80 },
   areaSqM: { type: Number, min: 0.5, default: 6 },
   availability: { type: String, enum: ['Available', 'Reserved', 'In use'], default: 'In use' },

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 
 const gardenTaskSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
   title: { type: String, required: true, trim: true, maxlength: 120 },
   assignedTo: { type: String, trim: true, maxlength: 80, default: '' },
   dueOn: { type: Date, required: true },
